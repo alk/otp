@@ -59,6 +59,17 @@ static void bw(byte *buf, int sz)
 }
 #endif
 
+extern
+int hack_is_distribution_port(ErlDrvPort drvport);
+
+int hack_is_distribution_port(ErlDrvPort drvport)
+{
+    Port* prt = erts_drvport2port(drvport);
+    return (prt->status & ERTS_PORT_SFLG_DISTRIBUTION);
+}
+
+
+
 #ifdef ERTS_DIST_MSG_DBG
 static void
 dist_msg_dbg(ErtsDistExternal *edep, char *what, byte *buf, int sz)

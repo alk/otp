@@ -489,7 +489,9 @@ con_loop(Kernel, Node, Socket, TcpAddress,
 			     MFTick, MFGetstat);
 		_ ->
 		    ?shutdown2(Node, get_status_failed)
-	    end
+	    end;
+        Other ->
+            error_msg("Got some other message: ~p~n", [Other])
     end.
 
 

@@ -64,6 +64,9 @@
 
 #include "erl_driver.h"
 
+extern int hack_is_distribution_port(ErlDrvPort drvport);
+
+
 /* The IS_SOCKET_ERROR macro below is used for portability reasons. While
    POSIX specifies that errors from socket-related system calls should be
    indicated with a -1 return value, some users have experienced non-Windows
@@ -1410,6 +1413,23 @@ static void free_buffer(ErlDrvBinary* buf)
 	else
 	    driver_free_binary(buf);
     }
+}
+
+extern void tcp_int_error_message(tcp_descriptor *desc, int err);
+
+void tcp_int_error_message(tcp_descriptor *desc, int err)
+{
+    ErlDrvTermData spec[8];
+    int i = 0;
+
+    fprintf(stderr, "tcp_error_message(%ld): %d\r\n", (long)desc->inet.port, err);
+
+    i = LOAD_ATOM(spec, i, am_tcp_error);
+    i = LOAD_PORT(spec, i, desc->inet.dport);
+    i = LOAD_INT(spec, i, err);
+    i = LOAD_TUPLE(spec, i, 3);
+    ASSERT(i <= 8);
+    driver_output_term(desc->inet.port, spec, i);
 }
 
 
@@ -2997,6 +3017,13 @@ static int tcp_closed_message(tcp_descriptor* desc)
     int i = 0;
 
     DEBUGF(("tcp_closed_message(%ld):\r\n", (long)desc->inet.port)); 
+
+    {
+	if (hack_is_distribution_port(desc->inet.port)) {
+            fprintf(stderr, "disconnecting port %ld\n", (long)desc->inet.port);
+        }
+    }
+
     if (!(desc->tcp_add_flags & TCP_ADDF_CLOSE_SENT)) {
 	desc->tcp_add_flags |= TCP_ADDF_CLOSE_SENT;
 
@@ -8622,7 +8649,10 @@ static int tcp_recv(tcp_descriptor* desc, int request_len)
     if (IS_SOCKET_ERROR(n)) {
 	int err = sock_errno();
 	if (err == ECONNRESET) {
-	    DEBUGF((" => detected close (connreset)\r\n"));
+            if (hack_is_distribution_port(desc->inet.port)) {
+                fprintf(stderr, " => detected close (connreset)\r\n");
+                tcp_int_error_message(desc, err);
+            }
 	    return tcp_recv_closed(desc);
 	}
 	if (err == ERRNO_BLOCK) {
@@ -8635,7 +8665,10 @@ static int tcp_recv(tcp_descriptor* desc, int request_len)
 	}
     }
     else if (n == 0) {
-	DEBUGF(("  => detected close\r\n"));
+        if (hack_is_distribution_port(desc->inet.port)) {
+            fprintf(stderr, "  => detected close\r\n");
+            tcp_int_error_message(desc, -1);
+        }
 	return tcp_recv_closed(desc);
     }
 
@@ -8769,7 +8802,7 @@ static void tcp_inet_event(ErlDrvData e, ErlDrvEvent event)
 	    (long)desc->inet.port, desc->inet.s));
     if (WSAEnumNetworkEvents(desc->inet.s, desc->inet.event,
 					&netEv) != 0) {
-	DEBUGF((" => EnumNetworkEvents = %d\r\n", sock_errno() ));
+	fprintf(stderr, " => EnumNetworkEvents = %d\r\n", sock_errno() );
 	goto error;
     }
 
@@ -8835,6 +8868,12 @@ static void tcp_inet_event(ErlDrvData e, ErlDrvEvent event)
     if (netEv.lNetworkEvents & FD_CLOSE) {
 	/* error in err = netEv.iErrorCode[FD_CLOSE_BIT] */
 	DEBUGF(("Detected close in %s, line %d\r\n", __FILE__, __LINE__));
+        {
+            if (hack_is_distribution_port(desc->inet.port)) {
+                int err = netEv.iErrorCode[FD_CLOSE_BIT];
+                tcp_int_error_message(desc, err);
+            }
+        }
 	tcp_recv_closed(desc);
     }
     DEBUGF(("tcp_inet_event(%ld) }\r\n", (long)desc->inet.port));
@@ -9025,6 +9064,9 @@ static int tcp_send_error(tcp_descriptor* desc, int err)
     DEBUGF(("driver_failure_eof(%ld) in %s, line %d\r\n",
 	    (long)desc->inet.port, __FILE__, __LINE__));
     if (desc->inet.active) {
+        if (hack_is_distribution_port(desc->inet.port)) {
+            tcp_error_message(desc, err);
+        }
 	tcp_closed_message(desc);
 	inet_reply_error_am(INETP(desc), am_closed);
 	if (desc->inet.exitf)
